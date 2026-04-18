@@ -1,0 +1,66 @@
+name: release windows
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-windows:
+    runs-on: windows-2025
+    permissions:
+      contents: write
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            t: 64
+            msystem: MINGW64
+            pkg: mingw-w64-x86_64-gcc
+          - arch: i386
+            t: 32
+            msystem: MINGW32
+            pkg: mingw-w64-i686-gcc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup msys gcc (${{ matrix.arch }})
+        shell: cmd
+        run: |
+          set MSYS2_PATH_TYPE=inherit
+          set MSYSTEM=${{ matrix.msystem }}
+          set CHERE_INVOKING=yes
+          C:\msys64\usr\bin\bash -l -c "pacman -S --noconfirm ${{ matrix.pkg }}"
+
+      - name: build tcc (${{ matrix.arch }}-win32)
+        shell: cmd
+        run: |
+          set MSYS2_PATH_TYPE=inherit
+          set MSYSTEM=${{ matrix.msystem }}
+          set CHERE_INVOKING=yes
+          cd win32
+          C:\msys64\usr\bin\bash -l -c "cmd //c build-tcc.bat -t ${{ matrix.t }}"
+
+      - name: package (${{ matrix.arch }}-win32)
+        id: package
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $name = "tcc-${version}-${{ matrix.arch }}-win32"
+          $dest = New-Item -ItemType Directory -Path $name
+          Copy-Item win32\tcc.exe        "$dest\"
+          Copy-Item win32\libtcc.dll     "$dest\"
+          Copy-Item win32\lib     -Destination "$dest\lib"     -Recurse
+          Copy-Item win32\include -Destination "$dest\include" -Recurse
+          Copy-Item win32\libtcc  -Destination "$dest\libtcc"  -Recurse
+          Copy-Item win32\examples -Destination "$dest\examples" -Recurse
+          Copy-Item win32\doc     -Destination "$dest\doc"     -Recurse
+          $zip = "${name}.zip"
+          Compress-Archive -Path $name -DestinationPath $zip
+          echo "zip=$zip" >> $env:GITHUB_OUTPUT
+
+      - name: upload to release (${{ matrix.arch }}-win32)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: cmd
+        run: gh release upload ${{ github.event.release.tag_name }} ${{ steps.package.outputs.zip }}
